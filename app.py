@@ -8,6 +8,9 @@ import time
 import math
 import requests
 import datetime as dt
+import os
+import pickle
+import shutil
 from typing import List, Dict, Optional
 
 import numpy as np
@@ -434,29 +437,77 @@ col_a, col_b = st.sidebar.columns(2)
 lookback_days = col_a.number_input("Lookback (days)", min_value=30, max_value=800, value=400, step=10)
 interval = col_b.selectbox("Interval", options=["1d", "1h", "30m", "15m", "5m", "1m"], index=0)
 
+CACHE_DIR = "cache"
+UNIVERSE_CACHE = os.path.join(CACHE_DIR, "universe.pkl")
+PRICES_CACHE = os.path.join(CACHE_DIR, "prices.pkl")
+
+def save_cache(universe_df, prices):
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    with open(UNIVERSE_CACHE, "wb") as f:
+        pickle.dump(universe_df, f)
+    with open(PRICES_CACHE, "wb") as f:
+        pickle.dump(prices, f)
+
+def load_cache():
+    if os.path.exists(UNIVERSE_CACHE) and os.path.exists(PRICES_CACHE):
+        with open(UNIVERSE_CACHE, "rb") as f:
+            universe_df = pickle.load(f)
+        with open(PRICES_CACHE, "rb") as f:
+            prices = pickle.load(f)
+        return universe_df, prices
+    return None, None
+
+def clear_cache():
+    if os.path.exists(CACHE_DIR):
+        shutil.rmtree(CACHE_DIR)
+        
+# -----------------------
+# Sidebar controls
+# -----------------------
 fetch_btn = st.sidebar.button("📥 Fetch latest (clear & reload)")
+clear_cache_btn = st.sidebar.button("🗑️ Clear cache")
+auto_fetch = st.sidebar.checkbox("Auto-fetch on page load", value=True)
 
-# -----------------------
-# Fetch on demand only
-# -----------------------
-if fetch_btn:
-    st.session_state[SS["universe"]] = None
-    st.session_state[SS["prices"]] = None
-
+def do_fetch():
     with st.spinner("Fetching constituents…"):
         universe_df = build_universe(indices_choice)
-        st.session_state[SS["universe"]] = universe_df
-
     yf_tickers = universe_df["YFTicker"].dropna().unique().tolist()
-
     with st.spinner(f"Downloading {len(yf_tickers)} tickers price history…"):
         prices = get_price_history(yf_tickers, lookback_days=int(lookback_days), interval=interval)
-        st.session_state[SS["prices"]] = prices
-        st.session_state[SS["last_fetch"]] = dt.datetime.now()
+    st.session_state[SS["universe"]] = universe_df
+    st.session_state[SS["prices"]] = prices
+    st.session_state[SS["last_fetch"]] = dt.datetime.now()
+    save_cache(universe_df, prices) 
 
-if SS["universe"] not in st.session_state or st.session_state[SS["universe"]] is None:
-    st.info("👆 Choose indices and click *Fetch latest*. Filters won’t re-download data.")
-    st.stop()
+# -----------------------
+# Init session state keys safely
+# -----------------------
+for k in [SS["universe"], SS["prices"], SS["last_fetch"]]:
+    if k not in st.session_state:
+        st.session_state[k] = None
+
+# -----------------------
+# Cache + fetch logic
+# -----------------------
+if clear_cache_btn:
+    clear_cache()
+    for k in [SS["universe"], SS["prices"], SS["last_fetch"]]:
+        st.session_state[k] = None
+    st.success("Cache cleared. Click *Fetch latest* to reload fresh data.")
+
+elif fetch_btn:
+    do_fetch()
+
+elif st.session_state.get(SS["universe"]) is None:
+    # Try loading cache first
+    universe_df, prices = load_cache()
+    if universe_df is not None and prices is not None:
+        st.session_state[SS["universe"]] = universe_df
+        st.session_state[SS["prices"]] = prices
+    elif auto_fetch:
+        do_fetch()
+
+
 
 universe_df = st.session_state[SS["universe"]]
 prices_store = st.session_state.get(SS["prices"], {})
