@@ -628,9 +628,8 @@ with colR:
 
 st.markdown("---")
 st.caption("""
-Notes:
-- NIFTY constituents from Nifty Indices CSVs (Smallcap 250, Midcap 150, NIFTY 500); BSE SmallCap via Screener (static) with BSE page as fallback.
-- Yahoo tickers use .NS (NSE) and .BO (BSE scrip codes, e.g., 500325.BO).
-- Prices via yfinance are delayed; plug your real-time provider into get_price_history() if needed.
-- Fetch happens only when you click *Fetch latest*; all filters are local & instant.
+Disclaimer:
+The information, charts, and analysis shared are for educational purposes only and should not be considered as financial or investment advice. 
+Stock market investments are subject to risks, and you should consult with a qualified financial advisor before making any investment decisions. 
+We are not responsible for any losses incurred based on the information provided
 """)
