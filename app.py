@@ -424,7 +424,7 @@ def plot_stock(df: pd.DataFrame, title: str, ma_windows: List[int], rsi_period: 
 # -----------------------
 # Sidebar — Fetch controls
 # -----------------------
-st.sidebar.header("Universe & Data Fetch")
+st.sidebar.header("Stocks Data Fetch")
 
 indices_choice = st.sidebar.multiselect(
     "Indices",
