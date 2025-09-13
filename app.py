@@ -596,7 +596,7 @@ elif allow_near_breakout and "NearBreakout" in df.columns:
 # -----------------------
 colL, colR = st.columns([2, 1])
 with colL:
-    st.subheader("Technically strong candidates")
+    st.subheader("Technically strong stocks")
     st.caption("Filters apply to the locally cached dataset only. Use *Fetch latest* to refresh.")
     if SS["last_fetch"] in st.session_state and st.session_state[SS["last_fetch"]]:
         st.text(f"Data last fetched: {st.session_state[SS['last_fetch']].strftime('%Y-%m-%d %H:%M:%S')}")
