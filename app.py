@@ -211,7 +211,8 @@ NSE_INDEX_SLUGS = {
     "NIFTY Metal": ["niftymetal"],
     "NIFTY Pharma": ["niftypharma"],
     "NIFTY PSU Bank": ["niftypsubank"],
-    "NIFTY Private Bank": ["niftyprivatebank"],
+    # Private Bank slug had been broken; include correct slug + fallbacks.
+    "NIFTY Private Bank": ["niftyprivatebank", "niftypvtbank", "NIFTYPRIVATEBANK"],
     "NIFTY Realty": ["niftyrealty"],
     "NIFTY Healthcare Index": ["niftyhealthcare", "niftyhealthcareindex"],
     "NIFTY Consumer Durables": ["niftyconsumerdurables"],
@@ -233,6 +234,8 @@ HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
     "Referer": "https://www.bseindia.com/",
 }
+
+CHART_LOOKBACK_DAYS = 3650  # ~10 years of data for charting
 
 # -----------------------
 # Helpers
@@ -505,6 +508,7 @@ def get_price_history(
     lookback_days: int,
     interval: str,
     use_max: bool = False,
+    min_required_points: int = 30,
     max_batch: int = 50,
     pause_seconds: float = 0.5
 ) -> Dict[str, pd.DataFrame]:
@@ -548,7 +552,9 @@ def get_price_history(
 
         time.sleep(pause_seconds)
 
-    min_len = 30 if use_max else max(30, math.ceil(lookback_days * 0.5))
+    min_len = min_required_points if min_required_points is not None else 0
+    if min_len <= 0:
+        min_len = 1
     out = {k: v for k, v in out.items() if len(v) >= min_len}
     return out
 
@@ -644,13 +650,20 @@ def build_indicator_table(
     near_breakout_pct: float,
     golden_fast: int,
     golden_slow: int,
-    golden_within_days: int
+    golden_within_days: int,
+    analysis_window_days: Optional[int] = None
 ) -> pd.DataFrame:
     rows = []
     for yfticker, df in prices_store.items():
         try:
+            df_use = df.copy()
+            if analysis_window_days is not None and analysis_window_days > 0:
+                cutoff = df_use.index.max() - pd.Timedelta(days=int(analysis_window_days))
+                df_use = df_use[df_use.index >= cutoff]
+                if df_use.empty:
+                    continue
             snap = compute_indicators_for_ticker(
-                df=df.copy(),
+                df=df_use,
                 ma_windows=ma_windows,
                 rsi_period=int(rsi_period),
                 breakout_lookback=int(breakout_lookback),
@@ -804,49 +817,89 @@ def render_lightweight_charts(
     ma_windows: List[int],
     rsi_period: int,
     price_chart_type: str = "Area",
-    chart_timeframe: str = "1d"
+    chart_timeframe: str = "1d",
+    available_timeframes: Optional[List[str]] = None,
+    symbol_options: Optional[List[Dict[str, str]]] = None,
+    current_symbol: Optional[str] = None
 ):
     """Render price + RSI using TradingView Lightweight Charts via Streamlit components."""
     if df is None or df.empty:
         st.info("No data available for this symbol.")
         return
-
-    df, note = prepare_chart_timeframe(df, chart_timeframe)
-    if note:
-        st.caption(note)
-
     ma_windows = sorted(set(ma_windows))
-
-    for w in ma_windows:
-        df[f"MA{w}"] = df["Close"].rolling(w).mean()
-
-    rsi_series = rsi_wilder(df["Close"], period=rsi_period)
-
     price_chart_type = (price_chart_type or "Area").strip().title()
-    price_data_line = _to_lw_series(df["Close"])
-    price_data_ohlc = _to_lw_ohlc(df)
-    volume_data = _to_lw_volume(df)
+    timeframe_options = available_timeframes or ["15m", "1d", "1w", "1mo"]
+    timeframe_options = [chart_timeframe] + [t for t in timeframe_options if t != chart_timeframe]
+    timeframe_options = list(dict.fromkeys(timeframe_options))
 
-    ma_data = []
-    ma_colors = ["#22c55e", "#0ea5e9", "#f97316", "#a855f7", "#ef4444", "#14b8a6"]
-    for idx, w in enumerate(ma_windows):
-        series_data = _to_lw_series(df[f"MA{w}"])
-        if not series_data:
-            continue
-        ma_data.append({
-            "name": f"MA{w}",
-            "color": ma_colors[idx % len(ma_colors)],
-            "data": series_data
-        })
+    ma_colors = ["#b10808", "#0ea5e9", "#f97316", "#a855f7", "#ef4444", "#14b8a6"]
+    chart_payload = {}
+    notes_payload = {}
+    has_volume_any = False
+    symbol_options = symbol_options or []
 
-    rsi_data = _to_lw_series(pd.Series(rsi_series, index=df.index))
+    for tf in timeframe_options:
+        df_tf, note_tf = prepare_chart_timeframe(df, tf)
+        notes_payload[tf] = note_tf or ""
+        df_tf = df_tf.copy()
+        for w in ma_windows:
+            df_tf[f"MA{w}"] = df_tf["Close"].rolling(w).mean()
+        rsi_series = rsi_wilder(df_tf["Close"], period=rsi_period)
+
+        payload = {
+            "price_line": _to_lw_series(df_tf["Close"]),
+            "price_ohlc": _to_lw_ohlc(df_tf),
+            "volume": _to_lw_volume(df_tf),
+            "ma": [],
+            "rsi": _to_lw_series(pd.Series(rsi_series, index=df_tf.index)),
+        }
+        for idx, w in enumerate(ma_windows):
+            series_data = _to_lw_series(df_tf[f"MA{w}"])
+            if not series_data:
+                continue
+            payload["ma"].append({
+                "name": f"MA{w}",
+                "color": ma_colors[idx % len(ma_colors)],
+                "data": series_data
+            })
+        if payload["volume"]:
+            has_volume_any = True
+        chart_payload[tf] = payload
+
     chart_id = f"lw-{abs(hash(title + chart_timeframe)) % 10_000_000}"
+
+    symbol_select_html = ""
+    if symbol_options:
+        opts = "".join([
+            f"<option value=\"{opt.get('value','') or ''}\" {'selected' if opt.get('value')==current_symbol else ''}>{opt.get('label','')}</option>"
+            for opt in symbol_options
+        ])
+        symbol_select_html = (
+            f"<label style='color:#e2e8f0; font-size:12px;'>Pick a company</label>"
+            f"<select id='{chart_id}-ticker' "
+            f"style='background:#111827; color:#e2e8f0; border:1px solid #1f2a3d; border-radius:8px; padding:6px 8px; font-size:12px;'>"
+            f"{opts}</select>"
+        )
 
     html = f"""
     <div id="{chart_id}-wrap" style="width: 100%; background: #0b1220; border: 1px solid #1f2a3d; border-radius: 12px; padding: 10px; position: relative;">
-      <div style="display: flex; justify-content: flex-end; gap: 8px; margin-bottom: 6px;">
-        <button id="{chart_id}-fs-btn" style="background: #111827; color: #e2e8f0; border: 1px solid #1f2a3d; border-radius: 8px; padding: 6px 10px; cursor: pointer;">⤢ Fullscreen</button>
+      <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap;">
+        <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+          {symbol_select_html}
+          <label style="color:#e2e8f0; font-size:12px;">Chart timeframe</label>
+          <select id="{chart_id}-tf" style="background:#111827; color:#e2e8f0; border:1px solid #1f2a3d; border-radius:8px; padding:6px 8px; font-size:12px;">
+            {"".join([f'<option value="{tf}" {"selected" if tf==chart_timeframe else ""}>{tf}</option>' for tf in timeframe_options])}
+          </select>
+          <label style="color:#e2e8f0; font-size:12px;">Price chart style</label>
+          <select id="{chart_id}-style" style="background:#111827; color:#e2e8f0; border:1px solid #1f2a3d; border-radius:8px; padding:6px 8px; font-size:12px;">
+            {"".join([f'<option value="{opt}" {"selected" if opt==price_chart_type else ""}>{opt}</option>' for opt in ["Candles","Area","Line","Bars"]])}
+          </select>
+        </div>
+        <div style="display:flex; gap:8px;">
+          <button id="{chart_id}-fs-btn" style="background: #111827; color: #e2e8f0; border: 1px solid #1f2a3d; border-radius: 8px; padding: 6px 10px; cursor: pointer;">⤢ Fullscreen</button>
+        </div>
       </div>
+      <div id="{chart_id}-note" style="color:#94a3b8; font-size:12px; min-height:16px; margin-bottom:4px;"></div>
       <div id="{chart_id}-price" style="height: 380px;"></div>
       <div id="{chart_id}-volume" style="height: 140px; margin-top: 6px;"></div>
       <div id="{chart_id}-rsi" style="height: 200px; margin-top: 12px;"></div>
@@ -854,11 +907,20 @@ def render_lightweight_charts(
     <script src="https://unpkg.com/lightweight-charts@4.1.0/dist/lightweight-charts.standalone.production.js"></script>
     <script>
       (function() {{
+        const chartPayload = {json.dumps(chart_payload)};
+        const notesPayload = {json.dumps(notes_payload)};
         const priceContainer = document.getElementById("{chart_id}-price");
         const volumeContainer = document.getElementById("{chart_id}-volume");
         const rsiContainer = document.getElementById("{chart_id}-rsi");
+        const tickerSelect = document.getElementById("{chart_id}-ticker");
+        const noteEl = document.getElementById("{chart_id}-note");
+        const tfSelect = document.getElementById("{chart_id}-tf");
+        const styleSelect = document.getElementById("{chart_id}-style");
         const wrap = document.getElementById("{chart_id}-wrap");
         const fsBtn = document.getElementById("{chart_id}-fs-btn");
+
+        let currentTf = tfSelect.value || "{chart_timeframe}";
+        let currentStyle = styleSelect.value || "{price_chart_type}";
 
         const baseLayout = {{
           layout: {{ background: {{ type: 'solid', color: '#0b1220' }}, textColor: '#e2e8f0' }},
@@ -869,65 +931,92 @@ def render_lightweight_charts(
         }};
 
         const priceChart = LightweightCharts.createChart(priceContainer, Object.assign({{ height: 380 }}, baseLayout));
-        const priceType = "{price_chart_type}";
-        if (priceType === "Candles" && {json.dumps(bool(price_data_ohlc))}) {{
-          const s = priceChart.addCandlestickSeries({{
-            upColor: '#22c55e',
-            downColor: '#ef4444',
-            borderUpColor: '#22c55e',
-            borderDownColor: '#ef4444',
-            wickUpColor: '#22c55e',
-            wickDownColor: '#ef4444',
-          }});
-          s.setData({json.dumps(price_data_ohlc)});
-        }} else if (priceType === "Bars" && {json.dumps(bool(price_data_ohlc))}) {{
-          const s = priceChart.addBarSeries({{
-            upColor: '#22c55e',
-            downColor: '#ef4444',
-            thinBars: false,
-          }});
-          s.setData({json.dumps(price_data_ohlc)});
-        }} else if (priceType === "Line") {{
-          const s = priceChart.addLineSeries({{
-            color: '#22c55e',
-            lineWidth: 2,
-          }});
-          s.setData({json.dumps(price_data_line)});
-        }} else {{
-          const s = priceChart.addAreaSeries({{
-            lineColor: '#22c55e',
-            topColor: 'rgba(34,197,94,0.35)',
-            bottomColor: 'rgba(34,197,94,0.05)',
-            priceFormat: {{ type: 'price', precision: 2, minMove: 0.01 }},
-          }});
-          s.setData({json.dumps(price_data_line)});
-        }}
-
-        const maPayload = {json.dumps(ma_data)};
-        maPayload.forEach(cfg => {{
-          const s = priceChart.addLineSeries({{
-            color: cfg.color,
-            lineWidth: 2,
-            title: cfg.name,
-          }});
-          s.setData(cfg.data);
-        }});
-
+        let priceSeries = null;
+        let maSeries = [];
         let volumeChart = null;
-        if ({json.dumps(bool(volume_data))}) {{
+        let volumeSeries = null;
+        const hasVolumeAny = {json.dumps(has_volume_any)};
+        if (hasVolumeAny) {{
           volumeChart = LightweightCharts.createChart(volumeContainer, Object.assign({{ height: 140 }}, baseLayout));
-          const volSeries = volumeChart.addHistogramSeries({{
+          volumeSeries = volumeChart.addHistogramSeries({{
             priceFormat: {{ type: 'volume' }},
             color: '#94a3b8',
           }});
-          volSeries.setData({json.dumps(volume_data)});
         }} else {{
           volumeContainer.style.display = "none";
         }}
 
+        const applyData = () => {{
+          const payload = chartPayload[currentTf] || chartPayload[Object.keys(chartPayload)[0]];
+          if (!payload) return;
+
+          // update note
+          noteEl.textContent = notesPayload[currentTf] || "";
+
+          // price + MAs
+          if (priceSeries) priceChart.removeSeries(priceSeries);
+          maSeries.forEach(s => priceChart.removeSeries(s));
+          maSeries = [];
+
+          if (currentStyle === "Candles" && payload.price_ohlc.length) {{
+            priceSeries = priceChart.addCandlestickSeries({{
+              upColor: '#22c55e',
+              downColor: '#ef4444',
+              borderUpColor: '#22c55e',
+              borderDownColor: '#ef4444',
+              wickUpColor: '#22c55e',
+              wickDownColor: '#ef4444',
+            }});
+            priceSeries.setData(payload.price_ohlc);
+          }} else if (currentStyle === "Bars" && payload.price_ohlc.length) {{
+            priceSeries = priceChart.addBarSeries({{
+              upColor: '#22c55e',
+              downColor: '#ef4444',
+              thinBars: false,
+            }});
+            priceSeries.setData(payload.price_ohlc);
+          }} else if (currentStyle === "Line") {{
+            priceSeries = priceChart.addLineSeries({{
+              color: '#22c55e',
+              lineWidth: 2,
+            }});
+            priceSeries.setData(payload.price_line);
+          }} else {{
+            priceSeries = priceChart.addAreaSeries({{
+              lineColor: '#22c55e',
+              topColor: 'rgba(34,197,94,0.35)',
+              bottomColor: 'rgba(34,197,94,0.05)',
+              priceFormat: {{ type: 'price', precision: 2, minMove: 0.01 }},
+            }});
+            priceSeries.setData(payload.price_line);
+          }}
+
+          payload.ma.forEach(cfg => {{
+            const s = priceChart.addLineSeries({{
+              color: cfg.color,
+              lineWidth: 2,
+              title: cfg.name,
+            }});
+            s.setData(cfg.data);
+            maSeries.push(s);
+          }});
+
+          if (volumeSeries) {{
+            if (payload.volume && payload.volume.length) {{
+              volumeSeries.setData(payload.volume);
+              volumeContainer.style.display = "block";
+            }} else {{
+              volumeSeries.setData([]);
+              volumeContainer.style.display = "none";
+            }}
+          }}
+          syncResize();
+        }};
+
         const rsiChart = LightweightCharts.createChart(rsiContainer, Object.assign({{ height: 200 }}, baseLayout));
         const rsiLine = rsiChart.addLineSeries({{ color: '#0ea5e9', lineWidth: 2 }});
-        rsiLine.setData({json.dumps(rsi_data)});
+        const rsiBand = rsiChart.addLineSeries({{ color: 'rgba(148,163,184,0.4)', lineWidth: 1, lineStyle: 2 }});
+        const rsiBandLow = rsiChart.addLineSeries({{ color: 'rgba(148,163,184,0.4)', lineWidth: 1, lineStyle: 2 }});
         rsiChart.addHistogramSeries({{
           color: 'rgba(226,232,240,0.08)',
           priceFormat: {{ type: 'volume' }},
@@ -945,16 +1034,18 @@ def render_lightweight_charts(
           baseLineColor: 'rgba(148,163,184,0.5)',
           lineWidth: 1,
         }}).setData([]);
-
-        const rsiBand = rsiChart.addLineSeries({{ color: 'rgba(148,163,184,0.4)', lineWidth: 1, lineStyle: 2 }});
-        const bandData = [];
-        const rsiSrc = {json.dumps(rsi_data)};
-        rsiSrc.forEach(p => bandData.push({{ time: p.time, value: 70 }}));
-        rsiBand.setData(bandData);
-        const rsiBandLow = rsiChart.addLineSeries({{ color: 'rgba(148,163,184,0.4)', lineWidth: 1, lineStyle: 2 }});
-        const bandDataLow = [];
-        rsiSrc.forEach(p => bandDataLow.push({{ time: p.time, value: 30 }}));
-        rsiBandLow.setData(bandDataLow);
+        const updateRsi = (payload) => {{
+          if (!payload || !payload.rsi) return;
+          rsiLine.setData(payload.rsi);
+          const bandData = [];
+          const bandDataLow = [];
+          payload.rsi.forEach(p => {{
+            bandData.push({{ time: p.time, value: 70 }});
+            bandDataLow.push({{ time: p.time, value: 30 }});
+          }});
+          rsiBand.setData(bandData);
+          rsiBandLow.setData(bandDataLow);
+        }};
 
         const resizeObserver = new ResizeObserver(entries => {{
           const width = entries[0].contentRect.width;
@@ -973,6 +1064,26 @@ def render_lightweight_charts(
         }};
         priceChart.timeScale().subscribeVisibleTimeRangeChange(syncResize);
 
+        tfSelect.addEventListener("change", (e) => {{
+          currentTf = e.target.value;
+          const payload = chartPayload[currentTf] || chartPayload[Object.keys(chartPayload)[0]];
+          updateRsi(payload);
+          applyData();
+        }});
+        styleSelect.addEventListener("change", (e) => {{
+          currentStyle = e.target.value;
+          applyData();
+        }});
+        if (tickerSelect) {{
+          tickerSelect.addEventListener("change", (e) => {{
+            const val = e.target.value;
+            if (!val) return;
+            const qs = new URLSearchParams(window.location.search);
+            qs.set("chart_symbol", val);
+            window.location.search = qs.toString();
+          }});
+        }}
+
         const toggleFullscreen = () => {{
           if (!document.fullscreenElement) {{
             if (wrap.requestFullscreen) wrap.requestFullscreen();
@@ -989,6 +1100,8 @@ def render_lightweight_charts(
           resizeObserver.observe(wrap);
         }});
         updateFsText();
+        updateRsi(chartPayload[currentTf]);
+        applyData();
       }})();
     </script>
     """
@@ -1020,6 +1133,15 @@ def _sanitize_indices(raw_list: List[str], fallback: List[str]) -> List[str]:
         ordered = [i for i in fallback if i in index_options]
     return ordered
 
+def _dedupe_indices(raw_list: List[str]) -> List[str]:
+    seen = set()
+    ordered = []
+    for item in raw_list:
+        if item in index_options and item not in seen:
+            ordered.append(item)
+            seen.add(item)
+    return ordered
+
 preselected_indices = _sanitize_indices(indices_from_url, fallback=default_indices)
 
 if "indices_choice" not in st.session_state:
@@ -1027,13 +1149,28 @@ if "indices_choice" not in st.session_state:
 else:
     st.session_state["indices_choice"] = _sanitize_indices(st.session_state["indices_choice"], fallback=default_indices)
 
-indices_choice = st.sidebar.multiselect(
+# Use a separate widget key to avoid modifying the same session key after instantiation
+if "indices_choice_widget" not in st.session_state:
+    st.session_state["indices_choice_widget"] = st.session_state["indices_choice"]
+
+indices_choice_raw = st.sidebar.multiselect(
     "Indices",
     options=index_options,
-    default=st.session_state["indices_choice"],
-    key="indices_choice",
+    default=st.session_state["indices_choice_widget"],
+    key="indices_choice_widget",
     help="Add sectoral and broad NIFTY indices (plus BSE SmallCap) to expand the scan universe."
 )
+
+# Auto-drop defaults once any custom selection is made
+indices_choice = _dedupe_indices(st.session_state.get("indices_choice_widget", indices_choice_raw))
+has_custom = any(i not in default_indices for i in indices_choice)
+if has_custom:
+    indices_choice = [i for i in indices_choice if i not in default_indices]
+if not indices_choice:
+    indices_choice = default_indices
+
+# Keep state/query params aligned with cleaned selection
+st.session_state["indices_choice"] = indices_choice
 
 # Persist current selection into the URL so page refresh retains it
 if indices_choice:
@@ -1081,13 +1218,15 @@ def do_fetch():
     with st.spinner("Fetching constituents…"):
         universe_df = build_universe(indices_choice)
     yf_tickers = universe_df["YFTicker"].dropna().unique().tolist()
-    lookback_display = "max available" if use_max_history else f"{int(lookback_days)}d"
+    fetch_lookback = CHART_LOOKBACK_DAYS if not use_max_history else 0
+    lookback_display = "max available" if use_max_history else f"{CHART_LOOKBACK_DAYS}d for charts"
     with st.spinner(f"Downloading {len(yf_tickers)} tickers price history ({lookback_display})…"):
         prices = get_price_history(
             yf_tickers,
-            lookback_days=int(lookback_days) if not use_max_history else 0,
+            lookback_days=int(fetch_lookback),
             interval=interval,
-            use_max=use_max_history
+            use_max=use_max_history,
+            min_required_points=30
         )
     st.session_state[SS["universe"]] = universe_df
     st.session_state[SS["prices"]] = prices
@@ -1209,7 +1348,8 @@ with st.spinner("Computing indicators locally…"):
         near_breakout_pct=float(near_breakout_pct),
         golden_fast=int(golden_fast),
         golden_slow=int(golden_slow),
-        golden_within_days=int(golden_window)
+        golden_within_days=int(golden_window),
+        analysis_window_days=None if use_max_history else int(lookback_days)
     )
     merged = merge_with_universe(ind_table, universe_df)
 
@@ -1275,7 +1415,9 @@ universe_count = len(universe_df) if isinstance(universe_df, pd.DataFrame) else 
 indices_label = ", ".join(indices_choice) if indices_choice else "No indices selected"
 active_indices = ", ".join(sorted(universe_df["Index"].dropna().unique())) if universe_df is not None and not universe_df.empty else "—"
 active_exchanges = " / ".join(sorted(df["Exchange"].dropna().unique())) if not df.empty else "—"
-lookback_label = "max available" if use_max_history else f"{int(lookback_days)}d"
+analysis_label = "all data" if use_max_history else f"{int(lookback_days)}d filters"
+chart_label = "max charts" if use_max_history else f"{CHART_LOOKBACK_DAYS}d charts"
+lookback_label = f"{analysis_label} / {chart_label}"
 
 st.markdown(f"""
 <div class="hero">
@@ -1381,6 +1523,13 @@ with colR:
     choices_df = (df if not df.empty else merged)[["yfticker","Symbol","Company Name","Exchange"]].dropna()
     preselected = None
     preselected_label = None
+    chart_symbol_param = None
+    if "chart_symbol" in query_params:
+        val = query_params.get("chart_symbol")
+        if isinstance(val, list):
+            chart_symbol_param = val[0] if val else None
+        else:
+            chart_symbol_param = val
     if selected_from_table is not None:
         preselected = selected_from_table.get("yfticker")
         if pd.notna(preselected):
@@ -1392,6 +1541,8 @@ with colR:
         labels = {row["yfticker"]: f"{row['Company Name']} — [{row['Symbol']}] ({row['Exchange']})" for _, row in choices_df.iterrows()}
         options = list(labels.keys())
         default_index = options.index(preselected) if preselected in options else 0
+        if chart_symbol_param and chart_symbol_param in options:
+            default_index = options.index(chart_symbol_param)
         if preselected_label:
             st.caption(f"Loaded from table: {preselected_label}")
         choice = st.selectbox(
@@ -1400,29 +1551,21 @@ with colR:
             index=default_index,
             format_func=lambda k: labels.get(k, k)
         )
+        st.query_params["chart_symbol"] = choice
         if choice in prices_store:
             title = labels.get(choice, choice)
-            chart_timeframe = st.radio(
-                "Chart timeframe",
-                options=["15m", "1d", "1w", "1mo"],
-                index=1,
-                horizontal=True,
-                help="Shows price/RSI at the selected timeframe. Weekly/Monthly are built from daily+ data."
-            )
-            chart_style = st.radio(
-                "Price chart style",
-                options=["Area", "Line", "Candles", "Bars"],
-                index=0,
-                horizontal=True,
-                help="Switch between area/line or OHLC-based candles/bars (needs OHLC data)."
-            )
+            st.caption("Use the dropdowns in the chart header (works in fullscreen) to switch timeframe/style.")
+            symbol_opts = [{"value": opt, "label": labels.get(opt, opt)} for opt in options]
             render_lightweight_charts(
                 prices_store[choice],
-                f"{title} — {chart_timeframe}",
+                f"{title}",
                 ma_windows=ma_windows,
                 rsi_period=int(rsi_period),
-                price_chart_type=chart_style,
-                chart_timeframe=chart_timeframe
+                price_chart_type="Candles",
+                chart_timeframe="1d",
+                available_timeframes=["15m", "1d", "1w", "1mo"],
+                symbol_options=symbol_opts,
+                current_symbol=choice
             )
         else:
             st.info("No chart data for this symbol in the cache (try refetch).")
