@@ -311,7 +311,7 @@ NSE_INDEX_SLUGS = {
     "NIFTY CAPITAL MARKETS": ["niftycapitalmarkets", "NIFTY CAPITAL MARKETS"],
     "NIFTY Chemicals": ["NIFTY CHEMICALS"],
     "NIFTY500 Healthcare": ["NIFTY500 HEALTHCARE"],
-    "NIFTY Auto": ["NIFTY Auto"],
+    "NIFTY Auto": ["NIFTY AUTO"],
     "NIFTY FMCG": ["NIFTY FMCG"],
     "NIFTY IT": ["NIFTY IT"],
     "NIFTY Media": ["NIFTY Media"],
