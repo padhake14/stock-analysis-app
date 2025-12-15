@@ -52,8 +52,115 @@ CUSTOM_STYLE = """
   backdrop-filter: blur(14px);
   border-right: 1px solid var(--border);
 }
+[data-testid="stHeader"] {
+  background: transparent;
+}
+[data-testid="stToolbar"] {
+  background: transparent;
+}
 [data-testid="stSidebar"] h1, [data-testid="stSidebar"] h2, [data-testid="stSidebar"] h3, [data-testid="stSidebar"] h4 {
   color: var(--ink);
+}
+[data-testid="stSidebar"] .sidebar-hero {
+  background: linear-gradient(140deg, rgba(14,165,233,0.14), rgba(22,163,74,0.12));
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 0.85rem 1rem;
+  margin-bottom: 0.7rem;
+  box-shadow: 0 12px 30px rgba(0,0,0,0.28);
+}
+[data-testid="stSidebar"] .sidebar-eyebrow {
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+[data-testid="stSidebar"] .sidebar-hero-title {
+  margin: 0.15rem 0;
+  font-weight: 700;
+  color: #f8fafc;
+  font-size: 1.08rem;
+}
+[data-testid="stSidebar"] .sidebar-note {
+  color: var(--muted);
+  font-size: 0.9rem;
+  margin: 0.05rem 0 0.2rem;
+}
+[data-testid="stSidebar"] .sidebar-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.35rem;
+}
+[data-testid="stSidebar"] .sidebar-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.28rem;
+  padding: 0.25rem 0.6rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border);
+  font-size: 0.83rem;
+  color: var(--ink);
+}
+[data-testid="stSidebar"] [data-testid="stExpander"] > details {
+  background: rgba(12, 19, 34, 0.62);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 0.45rem 0.75rem;
+  box-shadow: 0 10px 24px rgba(0,0,0,0.24);
+  margin-bottom: 0.6rem;
+  overflow: hidden;
+}
+[data-testid="stSidebar"] [data-testid="stExpander"] summary {
+  color: #f8fafc;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  background: transparent;
+}
+[data-testid="stSidebar"] [data-testid="stExpander"] summary:hover {
+  background: rgba(255,255,255,0.04);
+}
+[data-testid="stSidebar"] [data-testid="stExpander"] summary > div {
+  padding: 0.4rem 0.35rem;
+  background: transparent !important;
+}
+[data-testid="stSidebar"] [data-testid="stExpander"] div[role="group"] {
+  padding-top: 0.35rem;
+}
+[data-testid="stSidebar"] .section-label {
+  font-weight: 700;
+  color: #f8fafc;
+  margin: 0.35rem 0 0.2rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+[data-testid="stSidebar"] .section-label:before {
+  content: "•";
+  color: var(--accent);
+  font-size: 1.05rem;
+}
+[data-testid="stSidebar"] .section-note {
+  color: var(--muted);
+  font-size: 0.86rem;
+  margin: 0.1rem 0 0.5rem;
+}
+[data-testid="stSidebar"] .section-divider {
+  border-bottom: 1px dashed rgba(148, 163, 184, 0.35);
+  margin: 0.55rem 0 0.45rem;
+}
+[data-testid="stSidebar"] .stButton > button {
+  width: 100%;
+  border-radius: 12px;
+}
+[data-testid="stSidebar"] .sidebar-inline {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.4rem;
+}
+.main .block-container {
+  padding-top: 0.8rem;
 }
 .block-container {
   padding: 1.6rem 2.3rem 2rem;
@@ -236,6 +343,9 @@ HEADERS = {
 }
 
 CHART_LOOKBACK_DAYS = 3650  # ~10 years of data for charting
+CHART_PAYLOAD_LIMIT = 30  # limit precomputed chart payloads for performance
+CHART_LOOKBACK_FAST = 900  # faster fetch lookback for charts when long history not needed
+MA_COLORS = ["#b10808", "#0ea5e9", "#f97316", "#a855f7", "#ef4444", "#14b8a6"]
 
 # -----------------------
 # Helpers
@@ -584,6 +694,10 @@ def compute_indicators_for_ticker(
     rsi_period: int,
     breakout_lookback: int,
     near_breakout_pct: float,
+    lt_breakout_days: Optional[int],
+    lt_breakout_pct: float,
+    mt_breakout_days: Optional[int],
+    mt_breakout_pct: float,
     golden_fast: int,
     golden_slow: int,
     golden_within_days: int
@@ -603,6 +717,26 @@ def compute_indicators_for_ticker(
     is_breakout = bool(latest_close > latest_prev_high) if not np.isnan(latest_prev_high) else False
     near_breakout = bool(latest_close >= (latest_prev_high * (1 - near_breakout_pct / 100.0))) if not np.isnan(latest_prev_high) else False
 
+    # Long-term breakout vs X-year high
+    lt_breakout = False
+    lt_near = False
+    if lt_breakout_days and lt_breakout_days > 0:
+        span = c.tail(int(lt_breakout_days))
+        if not span.empty:
+            lt_high = span.max()
+            lt_breakout = bool(latest_close > lt_high)
+            lt_near = bool(latest_close >= lt_high * (1 - lt_breakout_pct / 100.0))
+
+    # Medium-term breakout vs X-month high
+    mt_breakout = False
+    mt_near = False
+    if mt_breakout_days and mt_breakout_days > 0:
+        span = c.tail(int(mt_breakout_days))
+        if not span.empty:
+            mt_high = span.max()
+            mt_breakout = bool(latest_close > mt_high)
+            mt_near = bool(latest_close >= mt_high * (1 - mt_breakout_pct / 100.0))
+
     fast_ma = df[f"MA{golden_fast}"] if f"MA{golden_fast}" in df.columns else c.rolling(golden_fast).mean()
     slow_ma = df[f"MA{golden_slow}"] if f"MA{golden_slow}" in df.columns else c.rolling(golden_slow).mean()
     cross_date = last_cross_up(fast_ma, slow_ma)
@@ -614,6 +748,10 @@ def compute_indicators_for_ticker(
     out["RSI"] = float(df["RSI"].iloc[-1])
     out["Breakout"] = is_breakout
     out["NearBreakout"] = near_breakout
+    out["LTBreakout"] = lt_breakout
+    out["LTNear"] = lt_near
+    out["MTBreakout"] = mt_breakout
+    out["MTNear"] = mt_near
     out["GoldenCrossDate"] = cross_date
     out["GoldenCrossRecent"] = has_recent_golden
     for w in ma_windows:
@@ -648,6 +786,10 @@ def build_indicator_table(
     rsi_period: int,
     breakout_lookback: int,
     near_breakout_pct: float,
+    lt_breakout_days: Optional[int],
+    lt_breakout_pct: float,
+    mt_breakout_days: Optional[int],
+    mt_breakout_pct: float,
     golden_fast: int,
     golden_slow: int,
     golden_within_days: int,
@@ -668,6 +810,10 @@ def build_indicator_table(
                 rsi_period=int(rsi_period),
                 breakout_lookback=int(breakout_lookback),
                 near_breakout_pct=float(near_breakout_pct),
+                lt_breakout_days=lt_breakout_days,
+                lt_breakout_pct=float(lt_breakout_pct),
+                mt_breakout_days=mt_breakout_days,
+                mt_breakout_pct=float(mt_breakout_pct),
                 golden_fast=int(golden_fast),
                 golden_slow=int(golden_slow),
                 golden_within_days=int(golden_within_days)
@@ -764,6 +910,8 @@ def _infer_base_minutes(df: pd.DataFrame) -> Optional[float]:
 
 
 def _resample_prices(df: pd.DataFrame, rule: str) -> pd.DataFrame:
+    if rule.upper() in ("1M", "M"):
+        rule = "1ME"
     agg = {
         "Open": "first",
         "High": "max",
@@ -802,13 +950,159 @@ def prepare_chart_timeframe(df: pd.DataFrame, timeframe: str) -> (pd.DataFrame, 
                 note = "Weekly view needs at least daily data. Showing original data."
         elif timeframe in ("1mo", "1m", "monthly"):
             if base_minutes and base_minutes <= 1440:
-                df = _resample_prices(df, "1M")
+                df = _resample_prices(df, "1ME")
             else:
                 note = "Monthly view needs at least daily data. Showing original data."
     except Exception:
         note = "Could not resample to requested timeframe; showing original data."
 
     return df, note
+
+
+def _resample_daily_ohlc(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or df.empty:
+        return df
+    if not {"Open", "High", "Low", "Close"}.issubset(df.columns):
+        return df
+    df = df.copy()
+    df.index = pd.to_datetime(df.index)
+    df = df.sort_index()
+    agg = {
+        "Open": "first",
+        "High": "max",
+        "Low": "min",
+        "Close": "last",
+        "Adj Close": "last",
+        "Volume": "sum",
+    }
+    return df.resample("1D").agg(agg).dropna(subset=["Close"])
+
+
+def detect_patterns(df: pd.DataFrame) -> Dict[str, bool]:
+    """Heuristic pattern detection (not trading advice). Uses daily resampled data."""
+    out = {"PatternCupHandle": False, "PatternSymTriangle": False, "PatternDarvasBreakout": False}
+    ddf = _resample_daily_ohlc(df)
+    if ddf is None or ddf.empty:
+        return out
+
+    close = ddf["Close"].dropna()
+    high = ddf.get("High", close)
+    low = ddf.get("Low", close)
+
+    # --- Cup & Handle (very rough) ---
+    cup_window = close.tail(220)
+    if len(cup_window) >= 80:
+        series = cup_window
+        idx_peak1 = series.iloc[:-30].idxmax()
+        peak1 = series.loc[idx_peak1]
+        after_peak = series.loc[idx_peak1:]
+        if len(after_peak) >= 40:
+            idx_trough = after_peak.idxmin()
+            trough = series.loc[idx_trough]
+            depth = (peak1 - trough) / peak1 if peak1 else 0
+            if 0.05 <= depth <= 0.35:
+                recover = after_peak.loc[idx_trough:].max()
+                near_recover = recover >= peak1 * 0.92
+                recent = series.tail(30)
+                handle_depth = (recover - recent.min()) / recover if recover else 0
+                close_near_high = series.iloc[-1] >= recover * 0.9
+                if near_recover and handle_depth <= 0.15 and close_near_high:
+                    out["PatternCupHandle"] = True
+
+    # --- Symmetrical Triangle ---
+    tri_high = high.tail(140)
+    tri_low = low.tail(140)
+    if len(tri_high) >= 40 and len(tri_low) >= 40:
+        x = np.arange(len(tri_high))
+        slope_h, intercept_h = np.polyfit(x, tri_high.values, 1)
+        slope_l, intercept_l = np.polyfit(x, tri_low.values, 1)
+        if slope_h < 0 and slope_l > 0:
+            start_gap = (slope_h * 0 + intercept_h) - (slope_l * 0 + intercept_l)
+            end_gap = (slope_h * len(x) + intercept_h) - (slope_l * len(x) + intercept_l)
+            if start_gap > 0 and end_gap > 0 and end_gap < start_gap * 0.6:
+                mid_price = close.tail(len(tri_high)).iloc[-1]
+                if end_gap / max(mid_price, 1e-6) < 0.06:
+                    out["PatternSymTriangle"] = True
+
+    # --- Darvas Box Breakout ---
+    if len(high) >= 30 and len(close) >= 30:
+        hh = high.tail(30)
+        ll = low.tail(30)
+        box_high = hh.head(-5).max()
+        box_low = ll.head(-5).min()
+        if box_high > 0:
+            width = (box_high - box_low) / box_high if box_high else 0
+            breakout = close.iloc[-1] > box_high * 1.005
+            if width <= 0.18 and breakout:
+                out["PatternDarvasBreakout"] = True
+
+    return out
+
+
+def build_pattern_table(prices_store: Dict[str, pd.DataFrame]) -> pd.DataFrame:
+    rows = []
+    for yfticker, df in prices_store.items():
+        try:
+            flags = detect_patterns(df)
+            flags["yfticker"] = yfticker
+            flags["Patterns"] = ", ".join([name.replace("Pattern", "") for name, v in flags.items() if name.startswith("Pattern") and v])
+            rows.append(flags)
+        except Exception:
+            continue
+    return pd.DataFrame(rows)
+
+
+def build_symbol_chart_payloads(
+    symbols: List[str],
+    prices_store: Dict[str, pd.DataFrame],
+    ma_windows: List[int],
+    rsi_period: int,
+    timeframe_options: List[str],
+    limit: Optional[int] = None
+) -> Dict[str, Dict]:
+    payloads: Dict[str, Dict] = {}
+    ma_colors = MA_COLORS
+    ma_windows = sorted(set(ma_windows))
+
+    count = 0
+    for sym in symbols:
+        if limit is not None and count >= limit:
+            break
+        df = prices_store.get(sym)
+        if df is None or df.empty:
+            continue
+        chart_payload = {}
+        notes_payload = {}
+        for tf in timeframe_options:
+            df_tf, note_tf = prepare_chart_timeframe(df, tf)
+            notes_payload[tf] = note_tf or ""
+            df_tf = df_tf.copy()
+            for w in ma_windows:
+                df_tf[f"MA{w}"] = df_tf["Close"].rolling(w).mean()
+            rsi_series = rsi_wilder(df_tf["Close"], period=rsi_period)
+            payload = {
+                "price_line": _to_lw_series(df_tf["Close"]),
+                "price_ohlc": _to_lw_ohlc(df_tf),
+                "volume": _to_lw_volume(df_tf),
+                "ma": [],
+                "rsi": _to_lw_series(pd.Series(rsi_series, index=df_tf.index)),
+            }
+            for idx, w in enumerate(ma_windows):
+                series_data = _to_lw_series(df_tf[f"MA{w}"])
+                if not series_data:
+                    continue
+                payload["ma"].append({
+                    "name": f"MA{w}",
+                    "color": ma_colors[idx % len(ma_colors)],
+                    "data": series_data
+                })
+            chart_payload[tf] = payload
+        count += 1
+        payloads[sym] = {
+            "timeframes": chart_payload,
+            "notes": notes_payload,
+        }
+    return payloads
 
 
 def render_lightweight_charts(
@@ -820,9 +1114,11 @@ def render_lightweight_charts(
     chart_timeframe: str = "1d",
     available_timeframes: Optional[List[str]] = None,
     symbol_options: Optional[List[Dict[str, str]]] = None,
-    current_symbol: Optional[str] = None
+    current_symbol: Optional[str] = None,
+    symbol_payloads: Optional[Dict[str, Dict]] = None,
 ):
     """Render price + RSI using TradingView Lightweight Charts via Streamlit components."""
+    ma_colors = MA_COLORS
     if df is None or df.empty:
         st.info("No data available for this symbol.")
         return
@@ -831,40 +1127,52 @@ def render_lightweight_charts(
     timeframe_options = available_timeframes or ["15m", "1d", "1w", "1mo"]
     timeframe_options = [chart_timeframe] + [t for t in timeframe_options if t != chart_timeframe]
     timeframe_options = list(dict.fromkeys(timeframe_options))
-
-    ma_colors = ["#b10808", "#0ea5e9", "#f97316", "#a855f7", "#ef4444", "#14b8a6"]
-    chart_payload = {}
-    notes_payload = {}
-    has_volume_any = False
     symbol_options = symbol_options or []
 
-    for tf in timeframe_options:
-        df_tf, note_tf = prepare_chart_timeframe(df, tf)
-        notes_payload[tf] = note_tf or ""
-        df_tf = df_tf.copy()
-        for w in ma_windows:
-            df_tf[f"MA{w}"] = df_tf["Close"].rolling(w).mean()
-        rsi_series = rsi_wilder(df_tf["Close"], period=rsi_period)
+    def build_payload(dataframe: pd.DataFrame):
+        chart_payload = {}
+        notes_payload = {}
+        for tf in timeframe_options:
+            df_tf, note_tf = prepare_chart_timeframe(dataframe, tf)
+            notes_payload[tf] = note_tf or ""
+            df_tf = df_tf.copy()
+            for w in ma_windows:
+                df_tf[f"MA{w}"] = df_tf["Close"].rolling(w).mean()
+            rsi_series = rsi_wilder(df_tf["Close"], period=rsi_period)
 
-        payload = {
-            "price_line": _to_lw_series(df_tf["Close"]),
-            "price_ohlc": _to_lw_ohlc(df_tf),
-            "volume": _to_lw_volume(df_tf),
-            "ma": [],
-            "rsi": _to_lw_series(pd.Series(rsi_series, index=df_tf.index)),
+            payload = {
+                "price_line": _to_lw_series(df_tf["Close"]),
+                "price_ohlc": _to_lw_ohlc(df_tf),
+                "volume": _to_lw_volume(df_tf),
+                "ma": [],
+                "rsi": _to_lw_series(pd.Series(rsi_series, index=df_tf.index)),
+            }
+            for idx, w in enumerate(ma_windows):
+                series_data = _to_lw_series(df_tf[f"MA{w}"])
+                if not series_data:
+                    continue
+                payload["ma"].append({
+                    "name": f"MA{w}",
+                    "color": ma_colors[idx % len(ma_colors)],
+                    "data": series_data
+                })
+            chart_payload[tf] = payload
+        return chart_payload, notes_payload
+
+    # Aggregate payloads for all selectable symbols (so switching in fullscreen doesn't reload)
+    symbol_payloads = symbol_payloads or {}
+    if current_symbol and current_symbol not in symbol_payloads:
+        chart_payload, notes_payload = build_payload(df)
+        symbol_payloads[current_symbol] = {
+            "timeframes": chart_payload,
+            "notes": notes_payload,
         }
-        for idx, w in enumerate(ma_windows):
-            series_data = _to_lw_series(df_tf[f"MA{w}"])
-            if not series_data:
-                continue
-            payload["ma"].append({
-                "name": f"MA{w}",
-                "color": ma_colors[idx % len(ma_colors)],
-                "data": series_data
-            })
-        if payload["volume"]:
-            has_volume_any = True
-        chart_payload[tf] = payload
+    if not symbol_payloads:
+        chart_payload, notes_payload = build_payload(df)
+        symbol_payloads[current_symbol or "current"] = {
+            "timeframes": chart_payload,
+            "notes": notes_payload,
+        }
 
     chart_id = f"lw-{abs(hash(title + chart_timeframe)) % 10_000_000}"
 
@@ -907,8 +1215,7 @@ def render_lightweight_charts(
     <script src="https://unpkg.com/lightweight-charts@4.1.0/dist/lightweight-charts.standalone.production.js"></script>
     <script>
       (function() {{
-        const chartPayload = {json.dumps(chart_payload)};
-        const notesPayload = {json.dumps(notes_payload)};
+        const symbolPayloads = {json.dumps(symbol_payloads)};
         const priceContainer = document.getElementById("{chart_id}-price");
         const volumeContainer = document.getElementById("{chart_id}-volume");
         const rsiContainer = document.getElementById("{chart_id}-rsi");
@@ -919,8 +1226,12 @@ def render_lightweight_charts(
         const wrap = document.getElementById("{chart_id}-wrap");
         const fsBtn = document.getElementById("{chart_id}-fs-btn");
 
+        const getFirstSymbol = () => Object.keys(symbolPayloads)[0];
+        let currentSymbol = "{current_symbol or ''}" || getFirstSymbol();
         let currentTf = tfSelect.value || "{chart_timeframe}";
         let currentStyle = styleSelect.value || "{price_chart_type}";
+        let chartPayload = (symbolPayloads[currentSymbol] || {{}}).timeframes || {{}};
+        let notesPayload = (symbolPayloads[currentSymbol] || {{}}).notes || {{}};
 
         const baseLayout = {{
           layout: {{ background: {{ type: 'solid', color: '#0b1220' }}, textColor: '#e2e8f0' }},
@@ -933,18 +1244,11 @@ def render_lightweight_charts(
         const priceChart = LightweightCharts.createChart(priceContainer, Object.assign({{ height: 380 }}, baseLayout));
         let priceSeries = null;
         let maSeries = [];
-        let volumeChart = null;
-        let volumeSeries = null;
-        const hasVolumeAny = {json.dumps(has_volume_any)};
-        if (hasVolumeAny) {{
-          volumeChart = LightweightCharts.createChart(volumeContainer, Object.assign({{ height: 140 }}, baseLayout));
-          volumeSeries = volumeChart.addHistogramSeries({{
-            priceFormat: {{ type: 'volume' }},
-            color: '#94a3b8',
-          }});
-        }} else {{
-          volumeContainer.style.display = "none";
-        }}
+        let volumeChart = LightweightCharts.createChart(volumeContainer, Object.assign({{ height: 140 }}, baseLayout));
+        let volumeSeries = volumeChart.addHistogramSeries({{
+          priceFormat: {{ type: 'volume' }},
+          color: '#94a3b8',
+        }});
 
         const applyData = () => {{
           const payload = chartPayload[currentTf] || chartPayload[Object.keys(chartPayload)[0]];
@@ -1078,9 +1382,30 @@ def render_lightweight_charts(
           tickerSelect.addEventListener("change", (e) => {{
             const val = e.target.value;
             if (!val) return;
+            if (!symbolPayloads[val]) {{
+              const qs = new URLSearchParams(window.location.search);
+              qs.set("chart_symbol", val);
+              const newUrl = window.location.pathname + "?" + qs.toString();
+              window.location.href = newUrl;
+              return;
+            }}
+            currentSymbol = val;
+            chartPayload = symbolPayloads[currentSymbol].timeframes || {{}};
+            notesPayload = symbolPayloads[currentSymbol].notes || {{}};
+            if (tfSelect && !chartPayload[currentTf]) {{
+              const firstTf = Object.keys(chartPayload)[0];
+              if (firstTf) {{
+                currentTf = firstTf;
+                tfSelect.value = firstTf;
+              }}
+            }}
+            const payload = chartPayload[currentTf] || chartPayload[Object.keys(chartPayload)[0]];
+            updateRsi(payload);
+            applyData();
             const qs = new URLSearchParams(window.location.search);
             qs.set("chart_symbol", val);
-            window.location.search = qs.toString();
+            const newUrl = window.location.pathname + "?" + qs.toString();
+            window.history.replaceState(null, "", newUrl);
           }});
         }}
 
@@ -1110,7 +1435,7 @@ def render_lightweight_charts(
 # -----------------------
 # Sidebar — Fetch controls
 # -----------------------
-st.sidebar.header("Stocks Data Fetch")
+sidebar_hero = st.sidebar.empty()
 
 index_options = list(NSE_INDEX_SLUGS.keys()) + ["BSE SmallCap"]
 default_indices = ["NIFTY Smallcap 250", "NIFTY Midcap 150"]
@@ -1153,13 +1478,30 @@ else:
 if "indices_choice_widget" not in st.session_state:
     st.session_state["indices_choice_widget"] = st.session_state["indices_choice"]
 
-indices_choice_raw = st.sidebar.multiselect(
-    "Indices",
-    options=index_options,
-    default=st.session_state["indices_choice_widget"],
-    key="indices_choice_widget",
-    help="Add sectoral and broad NIFTY indices (plus BSE SmallCap) to expand the scan universe."
-)
+with st.sidebar.expander("Fetch & cache", expanded=True):
+    st.markdown("<div class='section-label'>Universe</div>", unsafe_allow_html=True)
+    indices_choice_raw = st.multiselect(
+        "Indices",
+        options=index_options,
+        default=st.session_state["indices_choice_widget"],
+        key="indices_choice_widget",
+        help="Add sectoral and broad NIFTY indices (plus BSE SmallCap) to expand the scan universe."
+    )
+    st.caption("Pick the baskets you want to scan; defaults focus on small/mid-cap.")
+    st.markdown("<div class='section-divider'></div>", unsafe_allow_html=True)
+
+    st.markdown("<div class='section-label'>History window</div>", unsafe_allow_html=True)
+    use_max_history = st.checkbox("Use max available history", value=False, help="Fetch the full history Yahoo Finance allows for the chosen interval.")
+    col_a, col_b = st.columns(2)
+    lookback_days = col_a.number_input("Lookback (days)", min_value=30, max_value=800, value=400, step=10, disabled=use_max_history)
+    interval = col_b.selectbox("Interval", options=["1d", "1h", "30m", "15m", "5m", "1m"], index=0)
+    long_chart_history = st.checkbox("Use long chart history (10y)", value=False, help="Uncheck to speed up fetches; charts will use ~900d instead of 10y.")
+
+    st.markdown("<div class='section-divider'></div>", unsafe_allow_html=True)
+    action_cols = st.columns(2)
+    fetch_btn = action_cols[0].button("📥 Fetch latest (clear & reload)")
+    clear_cache_btn = action_cols[1].button("🗑️ Clear cache")
+    auto_fetch = st.checkbox("Auto-fetch on page load", value=True)
 
 # Auto-drop defaults once any custom selection is made
 indices_choice = _dedupe_indices(st.session_state.get("indices_choice_widget", indices_choice_raw))
@@ -1178,10 +1520,28 @@ if indices_choice:
 elif "indices" in st.query_params:
     st.query_params.pop("indices", None)
 
-use_max_history = st.sidebar.checkbox("Use max available history", value=False, help="Fetch the full history Yahoo Finance allows for the chosen interval.")
-col_a, col_b = st.sidebar.columns(2)
-lookback_days = col_a.number_input("Lookback (days)", min_value=30, max_value=800, value=400, step=10, disabled=use_max_history)
-interval = col_b.selectbox("Interval", options=["1d", "1h", "30m", "15m", "5m", "1m"], index=0)
+effective_chart_lookback = CHART_LOOKBACK_DAYS if long_chart_history else CHART_LOOKBACK_FAST
+
+indices_chip = ", ".join(indices_choice[:2]) if indices_choice else "No indices chosen"
+if len(indices_choice) > 2:
+    indices_chip += f" +{len(indices_choice) - 2}"
+lookback_chip = "Max history" if use_max_history else f"{int(lookback_days)}d lookback"
+chart_chip = "Charts: 10y" if long_chart_history else "Charts: ~900d"
+sidebar_hero.markdown(
+    f"""
+    <div class="sidebar-hero">
+      <div class="sidebar-eyebrow">Scanner setup</div>
+      <div class="sidebar-hero-title">Fetch & filter</div>
+      <div class="sidebar-note">Keep the universe tight, then layer on breakouts, patterns, and volumes.</div>
+      <div class="sidebar-chip-row">
+        <span class="sidebar-chip">Indices · {indices_chip}</span>
+        <span class="sidebar-chip">{interval} · {lookback_chip}</span>
+        <span class="sidebar-chip">{chart_chip}</span>
+      </div>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
 
 CACHE_DIR = "cache"
 UNIVERSE_CACHE = os.path.join(CACHE_DIR, "universe.pkl")
@@ -1206,20 +1566,13 @@ def load_cache():
 def clear_cache():
     if os.path.exists(CACHE_DIR):
         shutil.rmtree(CACHE_DIR)
-        
-# -----------------------
-# Sidebar controls
-# -----------------------
-fetch_btn = st.sidebar.button("📥 Fetch latest (clear & reload)")
-clear_cache_btn = st.sidebar.button("🗑️ Clear cache")
-auto_fetch = st.sidebar.checkbox("Auto-fetch on page load", value=True)
 
 def do_fetch():
     with st.spinner("Fetching constituents…"):
         universe_df = build_universe(indices_choice)
     yf_tickers = universe_df["YFTicker"].dropna().unique().tolist()
-    fetch_lookback = CHART_LOOKBACK_DAYS if not use_max_history else 0
-    lookback_display = "max available" if use_max_history else f"{CHART_LOOKBACK_DAYS}d for charts"
+    fetch_lookback = effective_chart_lookback if not use_max_history else 0
+    lookback_display = "max available" if use_max_history else f"{fetch_lookback}d for charts"
     with st.spinner(f"Downloading {len(yf_tickers)} tickers price history ({lookback_display})…"):
         prices = get_price_history(
             yf_tickers,
@@ -1241,6 +1594,8 @@ def do_fetch():
 for k in [SS["universe"], SS["prices"], SS["last_fetch"], SS["fetch_errors"]]:
     if k not in st.session_state:
         st.session_state[k] = None
+if "apply_pattern_filter" not in st.session_state:
+    st.session_state["apply_pattern_filter"] = False
 
 # -----------------------
 # Cache + fetch logic
@@ -1278,65 +1633,102 @@ if not prices_store:
 # -----------------------
 # Filters (local only)
 # -----------------------
-st.sidebar.header("Technical Filters (local)")
+filters_expander = st.sidebar.expander("Technical filters", expanded=True)
+with filters_expander:
+    st.markdown("<div class='section-label'>Moving averages & RSI</div>", unsafe_allow_html=True)
 
-# Multi-MA selection
-default_mas = [20, 50, 200]
-ma_string = st.sidebar.text_input("MAs (comma-sep)", value="20,50,200", help="e.g., 10,20,50,100,200")
-try:
-    ma_windows = sorted({int(x.strip()) for x in ma_string.split(",") if x.strip()})
-    if not ma_windows:
+    default_mas = [20, 50, 200]
+    ma_string = st.text_input("MAs (comma-sep)", value="20,50,200", help="e.g., 10,20,50,100,200")
+    try:
+        ma_windows = sorted({int(x.strip()) for x in ma_string.split(",") if x.strip()})
+        if not ma_windows:
+            ma_windows = default_mas
+    except Exception:
         ma_windows = default_mas
-except Exception:
-    ma_windows = default_mas
 
-require_price_above_all_ma = st.sidebar.checkbox("Price above all selected MAs", value=True)
-require_ma_alignment = st.sidebar.checkbox("MA alignment (short > long)", value=False)
+    require_price_above_all_ma = st.checkbox("Price above all selected MAs", value=True)
+    require_ma_alignment = st.checkbox("MA alignment (short > long)", value=False)
 
-# RSI
-rsi_period = st.sidebar.number_input("RSI period (days)", min_value=5, max_value=50, value=14, step=1)
-rsi_min, rsi_max = st.sidebar.slider("RSI range", min_value=0, max_value=100, value=(40, 80))
+    rsi_period = st.number_input("RSI period (days)", min_value=5, max_value=50, value=14, step=1)
+    rsi_min, rsi_max = st.slider("RSI range", min_value=0, max_value=100, value=(40, 80))
 
-# Breakout
-st.sidebar.subheader("Early Breakout")
-breakout_lookback = st.sidebar.number_input("Breakout lookback (days)", min_value=5, max_value=100, value=20, step=1)
-near_breakout_pct = st.sidebar.number_input("Within X% of breakout", min_value=0.0, max_value=10.0, value=2.0, step=0.5)
-require_breakout = st.sidebar.checkbox("Require fresh breakout (close > prior N-day high)", value=False)
-allow_near_breakout = st.sidebar.checkbox("Or near breakout (within X%)", value=True)
+    st.markdown("<div class='section-divider'></div>", unsafe_allow_html=True)
+    st.markdown("<div class='section-label'>Early breakout</div>", unsafe_allow_html=True)
+    early_cols = st.columns(2)
+    breakout_lookback = early_cols[0].number_input("Breakout lookback (days)", min_value=5, max_value=100, value=20, step=1)
+    near_breakout_pct = early_cols[1].number_input("Within X% of breakout", min_value=0.0, max_value=10.0, value=2.0, step=0.5)
+    require_breakout = st.checkbox("Require fresh breakout (close > prior N-day high)", value=False)
+    allow_near_breakout = st.checkbox("Or near breakout (within X%)", value=True)
 
-# Golden Cross
-st.sidebar.subheader("Golden Cross")
-golden_fast = st.sidebar.number_input("Fast MA", min_value=5, max_value=100, value=50, step=1)
-golden_slow = st.sidebar.number_input("Slow MA", min_value=20, max_value=400, value=200, step=5)
-golden_window = st.sidebar.number_input("Cross happened within N days", min_value=1, max_value=100, value=20, step=1)
-require_golden = st.sidebar.checkbox("Require recent Golden Cross", value=False)
+    st.markdown("<div class='section-divider'></div>", unsafe_allow_html=True)
+    st.markdown("<div class='section-label'>Long-term breakout</div>", unsafe_allow_html=True)
+    lt_breakout_enabled = st.checkbox("Enable long-term breakout filter", value=False)
+    lt_cols = st.columns(2)
+    lt_breakout_years = lt_cols[0].slider("Lookback (years)", min_value=1, max_value=3, value=2, step=1, disabled=not lt_breakout_enabled)
+    lt_breakout_pct = lt_cols[1].number_input("Within X% of long-term high", min_value=0.0, max_value=10.0, value=2.0, step=0.5, disabled=not lt_breakout_enabled)
 
-# Sector filter
-all_sectors = sorted([s for s in universe_df["Industry"].dropna().unique()])
-select_all_sectors = st.sidebar.checkbox("Select all sectors", value=False)
-selected_sectors = st.sidebar.multiselect("Industry (optional)", options=all_sectors, default=[])
-if select_all_sectors:
-    selected_sectors = all_sectors
+    st.markdown("<div class='section-label'>Medium-term breakout</div>", unsafe_allow_html=True)
+    mt_breakout_enabled = st.checkbox("Enable medium breakout filter", value=False)
+    mt_cols = st.columns(2)
+    mt_breakout_months = mt_cols[0].slider("Lookback (months)", min_value=3, max_value=6, value=3, step=1, disabled=not mt_breakout_enabled)
+    mt_breakout_pct = mt_cols[1].number_input("Within X% of medium-term high", min_value=0.0, max_value=10.0, value=2.0, step=0.5, disabled=not mt_breakout_enabled)
 
-# Company filter (lets you zero-in on specific names)
-company_query = st.sidebar.text_input(
-    "Company name contains (optional)",
-    value="",
-    help="Case-insensitive match; e.g., typing 'bank' will show all banking names."
-)
-company_picks = st.sidebar.multiselect(
-    "Or pick companies",
-    options=sorted(universe_df["Company Name"].dropna().unique()),
-    default=[]
-)
+    st.markdown("<div class='section-divider'></div>", unsafe_allow_html=True)
+    st.markdown("<div class='section-label'>Golden cross</div>", unsafe_allow_html=True)
+    gc_cols = st.columns(2)
+    golden_fast = gc_cols[0].number_input("Fast MA", min_value=5, max_value=100, value=50, step=1)
+    golden_slow = gc_cols[1].number_input("Slow MA", min_value=20, max_value=400, value=200, step=5)
+    golden_window = st.number_input("Cross happened within N days", min_value=1, max_value=100, value=20, step=1)
+    require_golden = st.checkbox("Require recent Golden Cross", value=False)
 
-st.sidebar.subheader("Volume / Delivery")
-min_avg_vol = st.sidebar.number_input("Min 20-day avg volume", min_value=0, value=0, step=10000)
-min_latest_vol = st.sidebar.number_input("Min latest volume", min_value=0, value=0, step=10000)
-min_vol_vs_avg = st.sidebar.number_input("Min volume vs avg (x)", min_value=0.0, value=0.0, step=0.1, format="%.1f")
-delivery_filter = st.sidebar.checkbox("Enable delivery filter (NSE only)", value=False)
-min_delivery_pct = st.sidebar.slider("Min delivery %", min_value=0, max_value=100, value=0, step=5, disabled=not delivery_filter)
-min_delivery_qty = st.sidebar.number_input("Min delivery quantity", min_value=0, value=0, step=10000, disabled=not delivery_filter)
+    st.markdown("<div class='section-divider'></div>", unsafe_allow_html=True)
+    st.markdown("<div class='section-label'>Patterns & sectors</div>", unsafe_allow_html=True)
+    pattern_choices = ["CupHandle", "SymTriangle", "DarvasBreakout"]
+    pattern_map = {
+        "CupHandle": "PatternCupHandle",
+        "SymTriangle": "PatternSymTriangle",
+        "DarvasBreakout": "PatternDarvasBreakout",
+    }
+    pattern_filter = st.multiselect("Pattern candidates", options=pattern_choices, default=[])
+    pattern_btn_cols = st.columns(2)
+    if pattern_btn_cols[0].button("🔍 Filter to pattern picks", use_container_width=True):
+        st.session_state["apply_pattern_filter"] = True
+    if pattern_btn_cols[1].button("Reset pattern filter", use_container_width=True):
+        st.session_state["apply_pattern_filter"] = False
+    pattern_filter_active = st.session_state.get("apply_pattern_filter", False)
+    if pattern_filter_active and pattern_filter:
+        st.caption("Pattern filter active — main table will only show selected patterns.")
+    elif pattern_filter_active:
+        st.caption("Pattern filter active, but no pattern is selected.")
+    else:
+        st.caption("Select patterns, then click the filter button to apply.")
+
+    all_sectors = sorted([s for s in universe_df["Industry"].dropna().unique()])
+    select_all_sectors = st.checkbox("Select all sectors", value=False)
+    selected_sectors = st.multiselect("Industry (optional)", options=all_sectors, default=[])
+    if select_all_sectors:
+        selected_sectors = all_sectors
+
+    st.markdown("<div class='section-label'>Companies</div>", unsafe_allow_html=True)
+    company_query = st.text_input(
+        "Company name contains (optional)",
+        value="",
+        help="Case-insensitive match; e.g., typing 'bank' will show all banking names."
+    )
+    company_picks = st.multiselect(
+        "Or pick companies",
+        options=sorted(universe_df["Company Name"].dropna().unique()),
+        default=[]
+    )
+
+    st.markdown("<div class='section-divider'></div>", unsafe_allow_html=True)
+    st.markdown("<div class='section-label'>Volume / Delivery</div>", unsafe_allow_html=True)
+    min_avg_vol = st.number_input("Min 20-day avg volume", min_value=0, value=0, step=10000)
+    min_latest_vol = st.number_input("Min latest volume", min_value=0, value=0, step=10000)
+    min_vol_vs_avg = st.number_input("Min volume vs avg (x)", min_value=0.0, value=0.0, step=0.1, format="%.1f")
+    delivery_filter = st.checkbox("Enable delivery filter (NSE only)", value=False)
+    min_delivery_pct = st.slider("Min delivery %", min_value=0, max_value=100, value=0, step=5, disabled=not delivery_filter)
+    min_delivery_qty = st.number_input("Min delivery quantity", min_value=0, value=0, step=10000, disabled=not delivery_filter)
 
 # Compute indicators locally
 with st.spinner("Computing indicators locally…"):
@@ -1346,12 +1738,30 @@ with st.spinner("Computing indicators locally…"):
         rsi_period=int(rsi_period),
         breakout_lookback=int(breakout_lookback),
         near_breakout_pct=float(near_breakout_pct),
+        lt_breakout_days=int(lt_breakout_years * 365) if lt_breakout_enabled else None,
+        lt_breakout_pct=float(lt_breakout_pct),
+        mt_breakout_days=int(mt_breakout_months * 30) if mt_breakout_enabled else None,
+        mt_breakout_pct=float(mt_breakout_pct),
         golden_fast=int(golden_fast),
         golden_slow=int(golden_slow),
         golden_within_days=int(golden_window),
         analysis_window_days=None if use_max_history else int(lookback_days)
     )
+    patterns_df = build_pattern_table(prices_store)
     merged = merge_with_universe(ind_table, universe_df)
+    if not patterns_df.empty:
+        merged = merged.merge(patterns_df, on="yfticker", how="left")
+    # Ensure pattern columns always exist so UI can show the tab even if no matches were found
+    for col in ["PatternCupHandle", "PatternSymTriangle", "PatternDarvasBreakout"]:
+        if col not in merged.columns:
+            merged[col] = False
+    if "Patterns" not in merged.columns:
+        merged["Patterns"] = ""
+    merged["PatternHit"] = (
+        merged.get("PatternCupHandle", False).fillna(False)
+        | merged.get("PatternSymTriangle", False).fillna(False)
+        | merged.get("PatternDarvasBreakout", False).fillna(False)
+    )
 
 # Delivery snapshot (NSE only) if requested
 if delivery_filter:
@@ -1363,6 +1773,7 @@ if delivery_filter:
             merged = merged.merge(delivery_df, on="Symbol", how="left")
 
 # Apply filters
+pattern_source = merged.copy()
 df = merged.copy()
 if selected_sectors and not select_all_sectors:
     df = df[df["Industry"].isin(selected_sectors)]
@@ -1405,6 +1816,36 @@ if require_breakout and "Breakout" in df.columns:
 elif allow_near_breakout and "NearBreakout" in df.columns:
     df = df[df["Breakout"] | df["NearBreakout"]]
 
+# Long-term breakout filter
+if lt_breakout_enabled and "LTBreakout" in df.columns:
+    df = df[(df["LTBreakout"] == True) | (df.get("LTNear", False) == True)]
+
+# Pattern filters (apply only when button-triggered)
+pattern_filter_active = st.session_state.get("apply_pattern_filter", False)
+pattern_highlight_mask = None
+pattern_mask_all = None
+if pattern_filter:
+    cols = [pattern_map[p] for p in pattern_filter if pattern_map.get(p) in df.columns]
+    if cols:
+        mask_all = False
+        for c in cols:
+            mask_all = mask_all | pattern_source[c].fillna(False)
+        pattern_mask_all = mask_all
+        pattern_highlight_mask = mask_all.reindex(df.index, fill_value=False)
+        if pattern_filter_active:
+            df = df[pattern_highlight_mask]
+
+# Medium-term breakout filter
+if mt_breakout_enabled and "MTBreakout" in df.columns:
+    df = df[(df["MTBreakout"] == True) | (df.get("MTNear", False) == True)]
+
+# Add a highlight column for patterns (helps visualize matches even without filtering)
+if pattern_highlight_mask is None and "PatternHit" in df.columns:
+    pattern_highlight_mask = df["PatternHit"].fillna(False)
+if pattern_highlight_mask is not None:
+    df["PatternHit"] = pattern_highlight_mask.reindex(df.index, fill_value=False)
+elif "PatternHit" not in df.columns:
+    df["PatternHit"] = False
 # -----------------------
 # Hero + quick stats
 # -----------------------
@@ -1416,7 +1857,7 @@ indices_label = ", ".join(indices_choice) if indices_choice else "No indices sel
 active_indices = ", ".join(sorted(universe_df["Index"].dropna().unique())) if universe_df is not None and not universe_df.empty else "—"
 active_exchanges = " / ".join(sorted(df["Exchange"].dropna().unique())) if not df.empty else "—"
 analysis_label = "all data" if use_max_history else f"{int(lookback_days)}d filters"
-chart_label = "max charts" if use_max_history else f"{CHART_LOOKBACK_DAYS}d charts"
+chart_label = "max charts" if use_max_history else f"{effective_chart_lookback}d charts"
 lookback_label = f"{analysis_label} / {chart_label}"
 
 st.markdown(f"""
@@ -1467,18 +1908,24 @@ colL, colR = st.columns([2, 1])
 with colL:
     st.markdown("<div class='glass-panel'>", unsafe_allow_html=True)
     st.subheader("Technically strong stocks")
-    st.caption("Filters apply to the locally cached dataset only. Use *Fetch latest* to refresh. Check a row to preview its chart.")
+    st.caption("Filters apply to the locally cached dataset only. Use *Fetch latest* to refresh. Click a row to preview its chart.")
     if SS["last_fetch"] in st.session_state and st.session_state[SS["last_fetch"]]:
         st.caption(f"Data last fetched: {st.session_state[SS['last_fetch']].strftime('%Y-%m-%d %H:%M:%S')}")
 
-    show_cols = ["Symbol", "Company Name", "Industry", "Index", "Exchange", "Close"]
+    show_cols = ["PatternHit", "Symbol", "Company Name", "Industry", "Index", "Exchange", "Close"]
     show_cols += [c for c in df.columns if c.startswith("MA")]
     show_cols += [
         "RSI",
         "Breakout",
         "NearBreakout",
+        "MTBreakout",
+        "MTNear",
         "GoldenCrossRecent",
         "GoldenCrossDate",
+        "PatternCupHandle",
+        "PatternSymTriangle",
+        "PatternDarvasBreakout",
+        "Patterns",
         "LatestVolume",
         "AvgVolume20",
         "VolumeVsAvg20",
@@ -1487,31 +1934,66 @@ with colL:
     ]
     show_cols = [c for c in show_cols if c in df.columns]
     table_source = df.sort_values(["Exchange", "Symbol"]).reset_index(drop=True)
-    table_base = table_source[show_cols].reset_index(drop=True)
-    table_cols = ["Select"] + show_cols + (["yfticker"] if "yfticker" in table_source.columns else [])
-    table_for_ui = table_base.copy()
-    table_for_ui.insert(0, "Select", False)
-    if "yfticker" in table_source.columns:
-        table_for_ui["yfticker"] = table_source["yfticker"].values
+    table_display = table_source[show_cols + (["yfticker"] if "yfticker" in table_source.columns else [])].reset_index(drop=True)
+    selected_from_table = None
 
-    column_config = {
-        "Select": st.column_config.CheckboxColumn("Select", help="Check a row to load its chart")
-    }
-    if "yfticker" in table_cols:
-        column_config["yfticker"] = st.column_config.TextColumn("YF Ticker", help="Used for charting")
+    def render_selectable_table(df_table, key_prefix: str):
+        if df_table.empty:
+            return None
+        st.markdown(f'<div class="table-wrap-{key_prefix}">', unsafe_allow_html=True)
+        sel = st.dataframe(
+            df_table,
+            use_container_width=True,
+            hide_index=True,
+            selection_mode="single-row",
+            on_select="rerun",
+            height=520,
+            key=f"{key_prefix}_table",
+        ).selection
+        st.markdown(
+            f"""
+            </div>
+            <style>
+            .table-wrap-{key_prefix} [data-testid="stDataFrame"] div[role="columnheader"]:first-child {{display: none !important;}}
+            .table-wrap-{key_prefix} [data-testid="stDataFrame"] div[role="row"] > div:first-child {{display: none !important;}}
+            .table-wrap-{key_prefix} [data-testid="stDataFrame"] input[type="checkbox"] {{display: none !important;}}
+            .table-wrap-{key_prefix} [data-testid="stDataFrame"] label:has(input[type="checkbox"]) {{display: none !important;}}
+            .table-wrap-{key_prefix} [data-testid="stDataFrame"] div[role="row"] {{ cursor: pointer; }}
+            </style>
+            """,
+            unsafe_allow_html=True,
+        )
+        if sel and "rows" in sel and sel["rows"]:
+            idx = sel["rows"][0]
+            if 0 <= idx < len(df_table):
+                return df_table.iloc[idx]
+        return None
 
-    edited_table = st.data_editor(
-        table_for_ui[table_cols],
-        hide_index=True,
-        use_container_width=True,
-        column_config=column_config,
-        key="main_table_editor"
-    )
+    tab_all, tab_patterns = st.tabs(["All filtered", "Pattern matches"])
+    with tab_all:
+        if table_display.empty:
+            st.info("No rows after filters.")
+        else:
+            picked = render_selectable_table(table_display, "main_table")
+            if picked is not None:
+                selected_from_table = picked
 
-    selected_row = edited_table[edited_table["Select"]]
-    if len(selected_row) > 1:
-        st.caption("Multiple rows selected; showing the first checked row.")
-    selected_from_table = selected_row.iloc[0] if not selected_row.empty else None
+    with tab_patterns:
+        pattern_cols = [c for c in ["PatternCupHandle", "PatternSymTriangle", "PatternDarvasBreakout"] if c in pattern_source.columns]
+        if not pattern_cols:
+            st.info("No pattern columns available.")
+        else:
+            # Use the full universe (pattern_source) for the pattern tab so it works even if main filters empty
+            pattern_mask = pattern_source["PatternHit"].fillna(False)
+            if pattern_mask_all is not None:
+                pattern_mask = pattern_mask_all
+            pattern_df = pattern_source[pattern_mask][show_cols + (["yfticker"] if "yfticker" in pattern_source.columns else [])].reset_index(drop=True)
+            if pattern_df.empty:
+                st.info("No pattern matches found for the selected patterns.")
+            else:
+                picked = render_selectable_table(pattern_df.reset_index(drop=True), "pattern_table")
+                if picked is not None:
+                    selected_from_table = picked
 
     csv_bytes = df[show_cols].to_csv(index=False).encode("utf-8")
     st.download_button("⬇️ Download filtered list (CSV)", data=csv_bytes, file_name="filtered_candidates.csv", mime="text/csv")
@@ -1519,6 +2001,7 @@ with colL:
 
 with colR:
     st.markdown("<div class='glass-panel'>", unsafe_allow_html=True)
+    st.markdown('<div id="chart-panel"></div>', unsafe_allow_html=True)
     st.subheader("Chart a stock")
     choices_df = (df if not df.empty else merged)[["yfticker","Symbol","Company Name","Exchange"]].dropna()
     preselected = None
@@ -1540,8 +2023,11 @@ with colR:
     else:
         labels = {row["yfticker"]: f"{row['Company Name']} — [{row['Symbol']}] ({row['Exchange']})" for _, row in choices_df.iterrows()}
         options = list(labels.keys())
-        default_index = options.index(preselected) if preselected in options else 0
-        if chart_symbol_param and chart_symbol_param in options:
+        # Prefer table selection, then URL param, then first option
+        default_index = 0
+        if preselected in options:
+            default_index = options.index(preselected)
+        elif chart_symbol_param and chart_symbol_param in options:
             default_index = options.index(chart_symbol_param)
         if preselected_label:
             st.caption(f"Loaded from table: {preselected_label}")
@@ -1551,11 +2037,20 @@ with colR:
             index=default_index,
             format_func=lambda k: labels.get(k, k)
         )
-        st.query_params["chart_symbol"] = choice
         if choice in prices_store:
             title = labels.get(choice, choice)
             st.caption("Use the dropdowns in the chart header (works in fullscreen) to switch timeframe/style.")
             symbol_opts = [{"value": opt, "label": labels.get(opt, opt)} for opt in options]
+            timeframe_opts = ["15m", "1d", "1w", "1mo"]
+            symbols_with_data = [opt for opt in options if opt in prices_store]
+            symbol_payloads = build_symbol_chart_payloads(
+                symbols_with_data,
+                prices_store,
+                ma_windows,
+                int(rsi_period),
+                timeframe_opts,
+                limit=CHART_PAYLOAD_LIMIT
+            )
             render_lightweight_charts(
                 prices_store[choice],
                 f"{title}",
@@ -1563,9 +2058,10 @@ with colR:
                 rsi_period=int(rsi_period),
                 price_chart_type="Candles",
                 chart_timeframe="1d",
-                available_timeframes=["15m", "1d", "1w", "1mo"],
+                available_timeframes=timeframe_opts,
                 symbol_options=symbol_opts,
-                current_symbol=choice
+                current_symbol=choice,
+                symbol_payloads=symbol_payloads
             )
         else:
             st.info("No chart data for this symbol in the cache (try refetch).")
