@@ -285,8 +285,8 @@ SS = {
 def nse_csv_urls(slug: str) -> List[str]:
     safe_slug = urllib.parse.quote(str(slug))
     return [
-        f"https://niftyindices.com/IndexConstituent/ind_{slug}list.csv",
-        f"https://nsearchives.nseindia.com/content/indices/ind_{slug}list.csv",
+        #f"https://niftyindices.com/IndexConstituent/ind_{slug}list.csv",
+        #f"https://nsearchives.nseindia.com/content/indices/ind_{slug}list.csv",
         f"https://www.nseindia.com/api/equity-stockIndices?csv=true&index={safe_slug}&selectValFormat=crores",
     ]
 
@@ -305,25 +305,25 @@ NSE_INDEX_SLUGS = {
     "NIFTY500 Multicap 50:25:25": ["nifty500multicap502525", "NIFTY500 Multicap 50:25:25"],
     "NIFTY Financial Services 25/50": ["niftyfinserv25_50", "NIFTY Financial Services 25/50"],
     "NIFTY Financial Services Ex-Bank": ["niftyfinservexbank", "Financial Services Ex-Bank"],
-    "NIFTY MidSmall Healthcare": ["MidSmall Healthcare"],
-    "NIFTY MidSmall Financial Services": ["niftymidsmallfinancialservices", "MidSmall Financial Services"],
+    "NIFTY MidSmall Healthcare": ["NIFTY MidSmall Healthcare"],
+    "NIFTY MidSmall Financial Services": ["NIFTY MidSmall Financial Services"],
     "NIFTY MidSmall IT & Telecom": ["niftymidsmallittelecom", "MidSmall IT & Telecom"],
     "NIFTY CAPITAL MARKETS": ["niftycapitalmarkets", "NIFTY CAPITAL MARKETS"],
-    "NIFTY Chemicals": ["niftychemicals"],
+    "NIFTY Chemicals": ["NIFTY CHEMICALS"],
     "NIFTY500 Healthcare": ["NIFTY500 HEALTHCARE"],
-    "NIFTY Auto": ["niftyauto"],
-    "NIFTY FMCG": ["niftyfmcg"],
-    "NIFTY IT": ["niftyit"],
-    "NIFTY Media": ["niftymedia"],
-    "NIFTY Metal": ["niftymetal"],
-    "NIFTY Pharma": ["niftypharma"],
-    "NIFTY PSU Bank": ["niftypsubank"],
+    "NIFTY Auto": ["NIFTY Auto"],
+    "NIFTY FMCG": ["NIFTY FMCG"],
+    "NIFTY IT": ["NIFTY IT"],
+    "NIFTY Media": ["NIFTY Media"],
+    "NIFTY Metal": ["NIFTY Metal"],
+    "NIFTY Pharma": ["NIFTY Pharma"],
+    "NIFTY PSU Bank": ["NIFTY PSU Bank"],
     # Private Bank slug had been broken; include correct slug + fallbacks.
     "NIFTY Private Bank": ["niftyprivatebank", "niftypvtbank", "NIFTYPRIVATEBANK"],
-    "NIFTY Realty": ["niftyrealty"],
-    "NIFTY Healthcare Index": ["niftyhealthcare", "niftyhealthcareindex"],
-    "NIFTY Consumer Durables": ["niftyconsumerdurables"],
-    "NIFTY Oil & Gas": ["niftyoilgas"],
+    "NIFTY Realty": ["NIFTY Realty"],
+    "NIFTY Healthcare Index": ["NIFTY Healthcare Index"],
+    "NIFTY Consumer Durables": ["NIFTY Consumer Durables"],
+    "NIFTY Oil & Gas": ["NIFTY Oil & Gas"],
 }
 
 CSV_SOURCES = {}
